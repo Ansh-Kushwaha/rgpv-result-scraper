@@ -65,7 +65,10 @@ def openResult(roll, subNum, sem, driver):
         Alert(driver).accept()
         clearCaptcha(roll, subNum, sem, driver)
     except:
-        storeResult(roll, subNum, sem, driver)
+        try:
+            storeResult(roll, subNum, sem, driver)
+        except:
+            pass
 
 
 def storeResult(roll, subNum, sem, driver):
@@ -154,9 +157,12 @@ def rollListGen():
 def main():
     subNum = int(input("Enter number of subjects (check from result upto last): "))
     sem = int(input("Enter Semester: "))
-    for roll in rollListGen():
-        scrape(roll, subNum, sem, driver)
-    wb.save('Result.xls')
+    try:
+        for roll in rollListGen():
+            scrape(roll, subNum, sem, driver)
+        wb.save('Result.xls')
+    except:
+        wb.save('Result.xls')
 
 main()
 driver.close()
