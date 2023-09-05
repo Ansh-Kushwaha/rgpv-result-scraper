@@ -121,8 +121,8 @@ def enterResult(name, roll, grades, sgpa, cgpa, result):
 def initSpreadsheet(branch: str, sem):
     sheet1 = wb.add_sheet(branch + '-Sem' + str(sem))
     sheet1.write(0, 0, 'S. No')
-    sheet1.write(0, 1, 'Enrollment')
-    sheet1.write(0, 2, 'Name')
+    sheet1.write(0, 1, 'Name')
+    sheet1.write(0, 2, 'Enrollment')
     # print(subs)
     i = 3
     for sub in subs:
