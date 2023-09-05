@@ -153,8 +153,9 @@ def rollListGen():
 
 def main():
     subNum = int(input("Enter number of subjects (check from result upto last): "))
+    sem = int(input("Enter Semester: "))
     for roll in rollListGen():
-        scrape(roll, subNum, 4, driver)
+        scrape(roll, subNum, sem, driver)
     wb.save('Result.xls')
 
 main()
