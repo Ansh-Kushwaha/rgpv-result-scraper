@@ -1,11 +1,12 @@
 import requests
 import pytesseract
 import time
+import xlsxwriter
 
 from PIL import Image
 from bs4 import BeautifulSoup
-from xlwt import Workbook
-from xlrd import open_workbook
+# from xlwt import Workbook
+
 from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
@@ -13,7 +14,7 @@ from selenium.webdriver.common.alert import Alert
 
 pytesseract.pytesseract.tesseract_cmd = 'C:/Program Files/Tesseract-OCR/tesseract'
 driver = webdriver.Chrome()
-wb = Workbook()
+wb = xlsxwriter.Workbook('Result.xlsx')
 subs = []
 sheetInit = False
 sheet = None
@@ -96,7 +97,7 @@ def parse(html, subNum, sem, roll):
 
     global sheetInit
     if sheetInit == False:
-        initSpreadsheet(roll[5:7], sem)
+        initSpreadsheet(roll[4:6], sem)
         sheetInit = True
     enterResult(name, roll, grades, sgpa, cgpa, result)
     # print(name, sgpa, cgpa, result, grades)
@@ -119,20 +120,21 @@ def enterResult(name, roll, grades, sgpa, cgpa, result):
     rowNum += 1
 
 def initSpreadsheet(branch: str, sem):
-    sheet1 = wb.add_sheet(branch + '-Sem' + str(sem))
-    sheet1.write(0, 0, 'S. No')
-    sheet1.write(0, 1, 'Name')
-    sheet1.write(0, 2, 'Enrollment')
+    sheet1 = wb.add_worksheet(branch + '-Sem' + str(sem))
+    bold = wb.add_format({'bold': True})
+    sheet1.write(0, 0, 'S. No', bold)
+    sheet1.write(0, 1, 'Name', bold)
+    sheet1.write(0, 2, 'Enrollment', bold)
     # print(subs)
     i = 3
     for sub in subs:
-        sheet1.write(0, i, sub)
+        sheet1.write(0, i, sub, bold)
         i += 1
-    sheet1.write(0, i, 'SGPA')
+    sheet1.write(0, i, 'SGPA', bold)
     i += 1
-    sheet1.write(0, i, 'CGPA')
+    sheet1.write(0, i, 'CGPA', bold)
     i += 1
-    sheet1.write(0, i, 'Result')
+    sheet1.write(0, i, 'Result', bold)
     i += 1
     global sheet
     sheet = sheet1
@@ -160,9 +162,10 @@ def main():
     try:
         for roll in rollListGen():
             scrape(roll, subNum, sem, driver)
-        wb.save('Result.xls')
+        sheet.autofit()
     except:
-        wb.save('Result.xls')
+        sheet.autofit()
 
 main()
+wb.close()
 driver.close()
