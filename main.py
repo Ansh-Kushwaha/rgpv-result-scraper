@@ -63,7 +63,7 @@ def open_result(roll, num_sub, semester):
         clear_captcha()
         driver.find_element(By.ID, "ctl00_ContentPlaceHolder1_btnviewresult").send_keys(Keys.ENTER)
 
-        wait = WebDriverWait(driver, timeout=2)
+        wait = WebDriverWait(driver, timeout=0.5)
         alert_present = wait.until(EC.alert_is_present(), message="")
 
         if alert_present:
@@ -74,7 +74,7 @@ def open_result(roll, num_sub, semester):
             if "not Found" in text:
                 print("Result not found for: ", roll)
 
-                with open("../lists/not_found.txt", "a") as f:
+                with open("./not_found.txt", "a") as f:
                     f.write(roll + "\n")
                 pass
             elif "wrong text" in text:
@@ -89,7 +89,7 @@ def store_result(roll, num_subs, sem):
     resultSheet = driver.find_element(By.ID, "ctl00_ContentPlaceHolder1_pnlGrading")
     html = resultSheet.get_attribute("innerHTML")
 
-    with open("../lists/successful.txt", "a") as f:
+    with open("./successful.txt", "a") as f:
         f.write(roll + "\n")
     
     soup = BeautifulSoup(html, 'lxml')
@@ -167,7 +167,7 @@ def roll_list_generator():
 
 def create_workbook(branch_code, semester):
     global wb
-    base = '../results/Result-' + branch_code + "-" + str(semester) 
+    base = './Result-' + branch_code + "-" + str(semester) 
     new_filename = base + ".xlsx"
     counter = 1
     while os.path.exists(new_filename):
@@ -181,9 +181,9 @@ def main():
     semester = int(input("Enter Semester (1 to 8): "))
     branch_code = input("Enter branch code (Ex.: CS, EC, AD, AL, etc): ")
 
-    with open("../successful.txt", "w") as f:
+    with open("./successful.txt", "w") as f:
         f.write(branch_code + "-" + str(semester) + "Sem\n")
-    with open("../not_found.txt", "w") as f:
+    with open("./not_found.txt", "w") as f:
         f.write(branch_code + "-" + str(semester) + "Sem\n")
 
     create_workbook(branch_code, semester)
