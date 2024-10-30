@@ -154,6 +154,11 @@ def init_sheet(branch: str, sem):
 def roll_list_generator(): 
     f = input('Enter First Enrollment number: ')
     l = input('Enter Last Enrollment number: ')
+
+    if len(f) != len(l):
+        print("Incorrect enrollment numbers.")
+        return ()
+
     roll_list = list()
     start = int(f[-4:])
     end = int(l[-4:]) + 1
