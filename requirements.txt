@@ -2,5 +2,3 @@ beautifulsoup4==4.12.3
 Pillow==11.0.0
 pytesseract==0.3.10
 Requests==2.32.3
-selenium==4.25.0
-XlsxWriter==3.1.2
