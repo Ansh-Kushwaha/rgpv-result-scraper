@@ -1,205 +1,225 @@
 import os
 import requests
 import pytesseract
-import time
-import xlsxwriter
+import random
+import string
+import tocsv
+from io import BytesIO
 from PIL import Image
 from bs4 import BeautifulSoup
 
-from selenium import webdriver
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.wait import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
+from concurrent.futures import ThreadPoolExecutor
+from time import sleep
+import threading
 
 pytesseract.pytesseract.tesseract_cmd = 'C:/Program Files/Tesseract-OCR/tesseract'
 
-# global variables
-driver = webdriver.Chrome()
-wb = None
-sheet = None
-row_idx = 0
-sheet_init = False
-subs = []
+def get_random_string():
+    random_str = ''.join([random.choice(string.ascii_letters + string.digits) for _ in range(24)])
+    return (random_str)
 
-# downloading and 
-def clear_captcha():
-    global driver
-    l = list()
-    captcha_elem = driver.find_element(By.ID, "ctl00_ContentPlaceHolder1_TextBox1")
-    captcha_elem.clear()
+class Processor:
+    fail = False
+    processed_count = 0
 
-    images = driver.find_elements(By.TAG_NAME, 'img')
-    for image in images:
-        a = image.get_attribute('src')
-        l.append(a)
-    captcha_src = l[1]
-    response = requests.get(captcha_src)
+    def __init__(self, sem):
+        self.lock = threading.Lock()
 
-    if response.status_code == 200:
-        with open("sample.jpg", 'wb') as f:
-            f.write(response.content)
-    img = Image.open('sample.jpg')
-    text = pytesseract.image_to_string(img).strip().upper().replace(' ', '')
-    captcha_elem.send_keys(text)
-    time.sleep(4.5)
+        self.sem = sem
 
-# trying to open the result
-def open_result(roll, num_sub, semester):
-    global driver
-    # base url
-    driver.get("http://result.rgpv.ac.in/Result")
+        self.first_entry=True
+        self.worksheet=tocsv.tocsv()
+        self.results = {}
+        self.num_cols = False
+
+
+    def start(self):
+        sess_url = self.get_session()
+        if self.fail:
+            return()
+        self.sess, self.url = sess_url
+        self.process(wait = True)
+
+    def process(self, wait = False):
+        with ThreadPoolExecutor(max_workers = 200) as executor:
+            for roll in self.roll_list_generator():
+                executor.submit(self.try_open, roll)
+            executor.shutdown(wait = wait)
+
+    def try_open(self,roll):
+        while self.get_result(roll) == 1:
+            pass
+
+    def get_session(self):
+        try:
+            cookie = get_random_string()
+            header = {'User-Agent' : 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36 Edg/130.0.0.0','Cookies':'ASP.NET_SessionId=' + cookie}
+
+            sess = requests.session()
+            sess.headers.update(header)
+            program_resp = sess.get('http://result.rgpv.ac.in/Result/ProgramSelect.aspx')
+
+            soup = BeautifulSoup(program_resp.text,'html5lib')
+
+            deptid = 'radlstProgram_1'
+            value = soup.find('input',{'id':deptid})['value']
+            deptid = deptid.replace('_','$')
+            viewState = soup.find('input',{'id':'__VIEWSTATE'})['value']
+            viewStateGen = soup.find('input',{'id':'__VIEWSTATEGENERATOR'})['value']
+            EvenValidation = soup.find('input',{'id':'__EVENTVALIDATION'})['value']
+            post_data = {'__EVENTTARGET':deptid,'__EVENTARGUMENT':'','__LASTFOCUS':'','__VIEWSTATE':viewState,'__VIEWSTATEGENERATOR':viewStateGen,'__EVENTVALIDATION':EvenValidation,'radlstProgram':value}
+            resp=sess.post('http://result.rgpv.ac.in/Result/ProgramSelect.aspx',data=post_data,allow_redirects=True)
+            url = resp.url
+            return ((sess, url))
+
+        except Exception as e:
+            print("Exception while establishing session: ", e)
+            self.fail = True
+
+    def get_result(self, roll):
+        for _ in range(10):
+            try:
+                with self.lock:
+                    resp = self.sess.get(self.url)
+                
+                soup = BeautifulSoup(resp.text,'html5lib')
+                image_url = "http://result.rgpv.ac.in/Result/" + soup.findAll('img')[1]['src']
+                response = requests.get(image_url)
+                
+                if response.status_code != 200:
+                    return (1)
+                
+                img = Image.open(BytesIO(response.content))
+                solution = pytesseract.image_to_string(img).strip().upper().replace(' ', '')
+                if not solution:
+                    return(1)
+                
+                # change this time in case of exceptions (minimum 5)
+                sleep(5)
+                viewState = soup.find('input',{'id':'__VIEWSTATE'})['value']
+                viewStateGen = soup.find('input',{'id':'__VIEWSTATEGENERATOR'})['value']
+                EvenValidation = soup.find('input',{'id':'__EVENTVALIDATION'})['value']
+
+                post_data = {'__EVENTTARGET':'', '__EVENTARGUMENT':'', '__LASTFOCUS':'', '__VIEWSTATE':viewState, '__VIEWSTATEGENERATOR':viewStateGen, '__EVENTVALIDATION':EvenValidation, 'ctl00$ContentPlaceHolder1$txtrollno':roll, 'ctl00$ContentPlaceHolder1$drpSemester':str(self.sem), 'ctl00$ContentPlaceHolder1$rbtnlstSType':'G', 'ctl00$ContentPlaceHolder1$TextBox1':solution, 'ctl00$ContentPlaceHolder1$btnviewresult':'View Result'}
+
+                with self.lock:
+                    result = self.sess.post(self.url, data=post_data, allow_redirects=True)
+
+                result_found='<td class="resultheader">'
+                wrong_captcha='<script language="JavaScript">alert("you have entered a wrong_captcha text");</script>'
+                result_not_found='<script language=JavaScript>alert("Result for this Enrollment No. not Found");</script>'
+                
+                if result_found in result.text:
+                    self.process_result(result.text, roll)
+                    return(0)
+                
+                elif wrong_captcha in result.text:
+                    return(1)
+                elif result_not_found in result.text:
+                    # todo handle this
+                    return(0)
+                else:
+                    return(1)
+
+            except Exception as e:
+                print("Exception while opening result for roll: ", roll, e)
+                self.fail = True
+            else:
+                break
+        else:
+            self.fail = True
+
+    def process_result(self, html, roll):
+        list = []
+        soup = BeautifulSoup(html,'html5lib')
+
+        name = soup.find(id="ctl00_ContentPlaceHolder1_lblNameGrading").get_text().strip()
+        sgpa = soup.find(id="ctl00_ContentPlaceHolder1_lblSGPA").get_text()
+        cgpa = soup.find(id="ctl00_ContentPlaceHolder1_lblcgpa").get_text()
+        result = soup.find(id="ctl00_ContentPlaceHolder1_lblResultNewGrading").get_text()
+        
+        with self.lock:
+            list.append(roll)
+            list.append(name)
+        
+        results = soup.findAll("table")[0].findAll("table")[2].findAll("tr")[6].findAll("table")
+        
+        with self.lock:
+            if self.first_entry is True:
+                self.first_entry = False
+                header_row = []
+                header_row.append("Enrollment Number")
+                header_row.append("Name")
+                for row in range(1, len(results)):
+                    header_row.append(results[row].findAll('td')[0].text.replace("\n",'').strip())
+                header_row.append("SGPA")
+                header_row.append("CGPA")
+                header_row.append("Result")
+                self.results[0] = header_row
+                self.num_cols = len(header_row)
+
+
+        for row in range(1, len(results)):
+            list.append(results[row].findAll('td')[3].text.replace("\n",'').strip())
+
+        list.append(sgpa)
+        list.append(cgpa)
+        list.append(result)
+        with self.lock:
+            self.processed_count += 1
+            self.results[int(roll[-3:])] = list
+
+            if self.processed_count % 10 == 0:
+                print("Processed", self.processed_count, "students.")
+
+    def to_csv(self):
+        if self.fail:
+            return(-1)
+        
+        list = sorted(self.results.items())
+        if self.num_cols:
+            self.worksheet.fromlist(list)
+            return(self.worksheet.getcsv())
+        else:
+            return(-1)
+
+
+    def roll_list_generator(self): 
+        f = input('Enter First Enrollment number: ')
+        l = input('Enter Last Enrollment number: ')
+
+        if len(f) != len(l):
+            print("Incorrect enrollment numbers.")
+            return ()
+
+        roll_list = list()
+        start = int(f[-4:])
+        end = int(l[-4:]) + 1
+        common = f[:8]
+        for i in range(start,end):
+            i = str(i)
+            roll = common + i
+            roll_list.append(roll)
+        
+        return(roll_list)
+
     
-    btech_elem = driver.find_element(By.ID, "radlstProgram_0")
-    btech_elem.send_keys(Keys.ARROW_RIGHT)
-    roll_elem = driver.find_element(By.ID, "ctl00_ContentPlaceHolder1_txtrollno")
-    roll_elem.send_keys(roll)
-    sem_elem = driver.find_element(By.ID, "ctl00_ContentPlaceHolder1_drpSemester")
-    for _ in range(1, semester):
-        sem_elem.send_keys(Keys.DOWN)
-    
-    try:
-        clear_captcha()
-        driver.find_element(By.ID, "ctl00_ContentPlaceHolder1_btnviewresult").send_keys(Keys.ENTER)
 
-        wait = WebDriverWait(driver, timeout=0.5)
-        alert_present = wait.until(EC.alert_is_present(), message="")
-
-        if alert_present:
-            alert = driver.switch_to.alert
-            text = alert.text
-            alert.accept()
-
-            if "not Found" in text:
-                print("Result not found for: ", roll)
-
-                with open("./not_found.txt", "a") as f:
-                    f.write(roll + "\n")
-                pass
-            elif "wrong text" in text:
-                open_result(roll, num_sub, semester)
-    except TimeoutException:
-        store_result(roll, num_sub, semester)
-
-# store result after opening
-def store_result(roll, num_subs, sem):
-    global driver
-
-    resultSheet = driver.find_element(By.ID, "ctl00_ContentPlaceHolder1_pnlGrading")
-    html = resultSheet.get_attribute("innerHTML")
-
-    with open("./successful.txt", "a") as f:
-        f.write(roll + "\n")
-    
-    soup = BeautifulSoup(html, 'lxml')
-    name = soup.find(id="ctl00_ContentPlaceHolder1_lblNameGrading").get_text().strip()
-    sgpa = soup.find(id="ctl00_ContentPlaceHolder1_lblSGPA").get_text()
-    cgpa = soup.find(id="ctl00_ContentPlaceHolder1_lblcgpa").get_text()
-    result = soup.find(id="ctl00_ContentPlaceHolder1_lblResultNewGrading").get_text()
-    grades = []   
-    base = 15
-
-    global subs
-    for i in range(0, num_subs):
-        if len(subs) != num_subs:
-            subs.append(soup.find_all('td')[base].get_text())
-        grades.append(soup.find_all('td')[base + 3].get_text())
-        base += 4
-
-    global sheet_init
-    if sheet_init == False:
-        init_sheet(roll[4:6], sem)
-        sheet_init = True
-
-    global row_idx
-    sheet.write(row_idx, 0, int(row_idx))
-    sheet.write(row_idx, 1, name)
-    sheet.write(row_idx, 2, roll)
-    i = 3
-    for grade in grades:
-        sheet.write(row_idx, i, grade)
-        i += 1
-    sheet.write(row_idx, i, float(sgpa))
-    i += 1
-    sheet.write(row_idx, i, float(cgpa))
-    i += 1
-    sheet.write(row_idx, i, result)
-    i += 1
-    row_idx += 1
-
-# set the first row of the sheet
-def init_sheet(branch: str, sem):
-    new_sheet = wb.add_worksheet(branch + '-Sem' + str(sem))
-    bold = wb.add_format({'bold': True})
-    new_sheet.write(0, 0, 'S. No', bold)
-    new_sheet.write(0, 1, 'Name', bold)
-    new_sheet.write(0, 2, 'Enrollment', bold)
-    i = 3
-    for sub in subs:
-        new_sheet.write(0, i, sub, bold)
-        i += 1
-    new_sheet.write(0, i, 'SGPA', bold)
-    i += 1
-    new_sheet.write(0, i, 'CGPA', bold)
-    i += 1
-    new_sheet.write(0, i, 'Result', bold)
-    i += 1
-    global sheet
-    sheet = new_sheet
-    global row_idx
-    row_idx += 1
-
-# generate a list of roll numbers between a range
-def roll_list_generator(): 
-    f = input('Enter First Enrollment number: ')
-    l = input('Enter Last Enrollment number: ')
-
-    if len(f) != len(l):
-        print("Incorrect enrollment numbers.")
-        return ()
-
-    roll_list = list()
-    start = int(f[-4:])
-    end = int(l[-4:]) + 1
-    common = f[:8]
-    for i in range(start,end):
-        i = str(i)
-        roll = common + i
-        roll_list.append(roll)
-    
-    return(roll_list)
-
-def create_workbook(branch_code, semester):
-    global wb
-    base = './Result-' + branch_code + "-" + str(semester) 
-    new_filename = base + ".xlsx"
-    counter = 1
-    while os.path.exists(new_filename):
-        new_filename = f"{base}({counter}).xlsx"
-        counter += 1
-    
-    wb = xlsxwriter.Workbook(new_filename)
-
-def main():
-    num_sub = int(input("Enter number of subjects (check from result the number of rows in the table): "))
+if __name__ == "__main__":
     semester = int(input("Enter Semester (1 to 8): "))
-    branch_code = input("Enter branch code (Ex.: CS, EC, AD, AL, etc): ")
+    filename = input("Enter filename: ")
+    res_processor = Processor(semester)
+    res_processor.start()
+    resp = res_processor.to_csv()
+    assert(resp not in [-1]), resp
 
-    with open("./successful.txt", "w") as f:
-        f.write(branch_code + "-" + str(semester) + "Sem\n")
-    with open("./not_found.txt", "w") as f:
-        f.write(branch_code + "-" + str(semester) + "Sem\n")
-
-    create_workbook(branch_code, semester)
-    try:
-        for roll in roll_list_generator():
-            open_result(roll, num_sub, semester)
-    except:
-        sheet.autofit()
-
-
-main()
-if wb:
-    wb.close()
-driver.close()
+    if filename[-4:] != ".csv":
+        filename = filename + ".csv"
+    
+    counter = 1
+    base = filename[:-4]
+    while os.path.exists(filename):
+        filename = f"{base}({counter}).csv"
+        counter += 1
+    with open(filename,'w+') as file:
+        file.write(resp)

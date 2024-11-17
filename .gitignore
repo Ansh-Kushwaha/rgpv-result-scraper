@@ -1,4 +1,4 @@
-/results/
-/lists/
 *.xlsx
 *.xls
+*.csv
+/__pycache__
