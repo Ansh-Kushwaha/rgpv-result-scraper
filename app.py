@@ -18,7 +18,7 @@ app = Flask(__name__)
 socketio = SocketIO(app)
 
 # Configure Tesseract path
-pytesseract.pytesseract.tesseract_cmd = 'C:/Program Files/Tesseract-OCR/tesseract'
+pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
 
 def get_random_string():
     random_str = ''.join([random.choice(string.ascii_letters + string.digits) for _ in range(24)])
