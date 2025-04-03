@@ -22,10 +22,11 @@ class Processor:
     fail = False
     processed_count = 0
 
-    def __init__(self, sem):
+    def __init__(self, sem, reval):
         self.lock = threading.Lock()
 
         self.sem = sem
+        self.for_reval = reval
 
         self.first_entry=True
         self.worksheet=tocsv.tocsv()
@@ -41,7 +42,8 @@ class Processor:
         self.process(wait = True)
 
     def process(self, wait = False):
-        with ThreadPoolExecutor(max_workers = 200) as executor:
+        # increase the max_workers to 500 or more if you have processing power to increase speed
+        with ThreadPoolExecutor(max_workers = 500) as executor:
             for roll in self.roll_list_generator():
                 executor.submit(self.try_open, roll)
             executor.shutdown(wait = wait)
@@ -61,15 +63,21 @@ class Processor:
 
             soup = BeautifulSoup(program_resp.text,'html5lib')
 
-            deptid = 'radlstProgram_1'
-            value = soup.find('input',{'id':deptid})['value']
-            deptid = deptid.replace('_','$')
-            viewState = soup.find('input',{'id':'__VIEWSTATE'})['value']
-            viewStateGen = soup.find('input',{'id':'__VIEWSTATEGENERATOR'})['value']
-            EvenValidation = soup.find('input',{'id':'__EVENTVALIDATION'})['value']
-            post_data = {'__EVENTTARGET':deptid,'__EVENTARGUMENT':'','__LASTFOCUS':'','__VIEWSTATE':viewState,'__VIEWSTATEGENERATOR':viewStateGen,'__EVENTVALIDATION':EvenValidation,'radlstProgram':value}
-            resp=sess.post('http://result.rgpv.ac.in/Result/ProgramSelect.aspx',data=post_data,allow_redirects=True)
+            if not self.for_reval:
+                deptid = 'radlstProgram_1'
+            else:
+                deptid = 'radlstRevalProg_1'
+            value = soup.find('input', {'id':deptid})['value']
+            deptid = deptid.replace('_', '$')
+            viewState = soup.find('input', {'id':'__VIEWSTATE'})['value']
+            viewStateGen = soup.find('input', {'id':'__VIEWSTATEGENERATOR'})['value']
+            EvenValidation = soup.find('input', {'id':'__EVENTVALIDATION'})['value']
+            post_data = {'__EVENTTARGET':deptid, '__EVENTARGUMENT':'', '__LASTFOCUS':'', '__VIEWSTATE':viewState, '__VIEWSTATEGENERATOR':viewStateGen, '__EVENTVALIDATION':EvenValidation, 'radlstProgram':value}
+            resp = sess.post('http://result.rgpv.ac.in/Result/ProgramSelect.aspx', data = post_data, allow_redirects = True)
             url = resp.url
+            if self.for_reval:
+                url = "http://result.rgpv.ac.in/Result/Revalrslt.aspx"
+            # print(url)
             return ((sess, url))
 
         except Exception as e:
@@ -77,10 +85,11 @@ class Processor:
             self.fail = True
 
     def get_result(self, roll):
-        for _ in range(10):
+        for _ in range(1):
             try:
                 with self.lock:
                     resp = self.sess.get(self.url)
+                    # print(resp.text)
                 
                 soup = BeautifulSoup(resp.text,'html5lib')
                 image_url = "http://result.rgpv.ac.in/Result/" + soup.findAll('img')[1]['src']
@@ -105,9 +114,63 @@ class Processor:
                 with self.lock:
                     result = self.sess.post(self.url, data=post_data, allow_redirects=True)
 
-                result_found='<td class="resultheader">'
-                wrong_captcha='<script language="JavaScript">alert("you have entered a wrong_captcha text");</script>'
-                result_not_found='<script language=JavaScript>alert("Result for this Enrollment No. not Found");</script>'
+                result_found = '<td class="resultheader">'
+                wrong_captcha = '<script language="JavaScript">alert("you have entered a wrong_captcha text");</script>'
+                result_not_found = '<script language=JavaScript>alert("Result for this Enrollment No. not Found");</script>'
+                
+                if result_found in result.text:
+                    self.process_result(result.text, roll)
+                    return(0)
+                
+                elif wrong_captcha in result.text:
+                    return(1)
+                elif result_not_found in result.text:
+                    # todo handle this
+                    return(0)
+                else:
+                    return(1)
+
+            except Exception as e:
+                print("Exception while opening result for roll: ", roll, e)
+                self.fail = True
+            else:
+                break
+        else:
+            self.fail = True
+
+    def get_result_reval(self, roll):
+        for _ in range(1):
+            try:
+                with self.lock:
+                    resp = self.sess.get(self.url)
+                    # print(resp.text)
+                
+                soup = BeautifulSoup(resp.text,'html5lib')
+                image_url = "http://result.rgpv.ac.in/Result/" + soup.findAll('img')[1]['src']
+                response = requests.get(image_url)
+                
+                if response.status_code != 200:
+                    return (1)
+                
+                img = Image.open(BytesIO(response.content))
+                solution = pytesseract.image_to_string(img).strip().upper().replace(' ', '')
+                if not solution:
+                    return(1)
+                
+                # change this time in case of exceptions (minimum 5)
+                sleep(5)
+                viewState = soup.find('input',{'id':'__VIEWSTATE'})['value']
+                viewStateGen = soup.find('input',{'id':'__VIEWSTATEGENERATOR'})['value']
+                EvenValidation = soup.find('input',{'id':'__EVENTVALIDATION'})['value']
+
+                post_data = {'__EVENTTARGET':'', '__EVENTARGUMENT':'', '__LASTFOCUS':'', '__VIEWSTATE':viewState, '__VIEWSTATEGENERATOR':viewStateGen, '__EVENTVALIDATION':EvenValidation, 'ctl00$ContentPlaceHolder1$txtrollno':roll, 'ctl00$ContentPlaceHolder1$drpSemester':str(self.sem), 'ctl00$ContentPlaceHolder1$rbtnlstSType':'G', 'ctl00$ContentPlaceHolder1$TextBox1':solution, 'ctl00$ContentPlaceHolder1$btnviewresult':'View Result'}
+
+                with self.lock:
+                    result = self.sess.post(self.url, data=post_data, allow_redirects=True)
+
+                result_found = '<td class="resultheader">'
+                wrong_captcha = '<script language="JavaScript">alert("you have entered a wrong_captcha text");</script>'
+                result_not_found = '<script language=JavaScript>alert("Result for this Enrollment No. not Found");</script>'
                 
                 if result_found in result.text:
                     self.process_result(result.text, roll)
@@ -131,12 +194,15 @@ class Processor:
 
     def process_result(self, html, roll):
         list = []
+        # print(html)
         soup = BeautifulSoup(html,'html5lib')
 
         name = soup.find(id="ctl00_ContentPlaceHolder1_lblNameGrading").get_text().strip()
         sgpa = soup.find(id="ctl00_ContentPlaceHolder1_lblSGPA").get_text()
         cgpa = soup.find(id="ctl00_ContentPlaceHolder1_lblcgpa").get_text()
         result = soup.find(id="ctl00_ContentPlaceHolder1_lblResultNewGrading").get_text()
+        result = result.split(",")
+        result = " ".join(result)
         
         with self.lock:
             list.append(roll)
@@ -169,7 +235,7 @@ class Processor:
             self.processed_count += 1
             self.results[int(roll[-3:])] = list
 
-            if self.processed_count % 10 == 0:
+            if self.processed_count:
                 print("Processed", self.processed_count, "students.")
 
     def to_csv(self):
@@ -206,12 +272,15 @@ class Processor:
     
 
 if __name__ == "__main__":
+    reval = input("Do you want to download reval result (y/n): ")
+    assert reval in ['y', 'n'], "Expected 'y' or 'n'"
+    
     semester = int(input("Enter Semester (1 to 8): "))
     filename = input("Enter filename: ")
-    res_processor = Processor(semester)
+    res_processor = Processor(semester, reval == 'y')
     res_processor.start()
     resp = res_processor.to_csv()
-    assert(resp not in [-1]), resp
+    assert(resp not in [-1]), "Couldn't load result" if resp == -1 else ""
 
     if filename[-4:] != ".csv":
         filename = filename + ".csv"
