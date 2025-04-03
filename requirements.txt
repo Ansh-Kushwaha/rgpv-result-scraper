@@ -2,3 +2,8 @@ beautifulsoup4==4.12.3
 Pillow==11.0.0
 pytesseract==0.3.10
 Requests==2.32.3
+flask==2.3.3
+flask-socketio==5.3.6
+html5lib==1.1
+python-engineio==4.8.0
+python-socketio==5.10.0

@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RGPV Results Scraper</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f5f5f5;
+        }
+        .card {
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .card-header {
+            background-color: #343a40;
+            color: white;
+            border-radius: 10px 10px 0 0 !important;
+        }
+        .btn-primary {
+            background-color: #007bff;
+            border-color: #007bff;
+        }
+        .progress {
+            height: 25px;
+            margin-top: 1rem;
+            margin-bottom: 1rem;
+        }
+        .alert {
+            display: none;
+            margin-top: 1rem;
+        }
+        #downloadSection {
+            display: none;
+            margin-top: 1rem;
+        }
+        .navbar-brand {
+            font-size: 1.5rem;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
+        <div class="container">
+            <span class="navbar-brand">
+                RGPV Results Scraper
+            </span>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="row justify-content-center">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header">
+                        <h4 class="mb-0">Extract Student Results</h4>
+                    </div>
+                    <div class="card-body">
+                        <form id="scrapingForm">
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label for="branch" class="form-label">Branch</label>
+                                    <select class="form-select" id="branch" name="branch" required>
+                                        {% for branch in branches %}
+                                        <option value="{{ branch.code }}">{{ branch.name }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="semester" class="form-label">Semester</label>
+                                    <select class="form-select" id="semester" name="semester" required>
+                                        {% for sem in semesters %}
+                                        <option value="{{ sem.value }}">{{ sem.name }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                            </div>
+                            
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label for="first_roll" class="form-label">First Enrollment Number</label>
+                                    <input type="text" class="form-control" id="first_roll" name="first_roll" placeholder="e.g. 0803CS191001" required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="last_roll" class="form-label">Last Enrollment Number</label>
+                                    <input type="text" class="form-control" id="last_roll" name="last_roll" placeholder="e.g. 0803CS191060" required>
+                                </div>
+                            </div>
+                            
+                            <div class="d-grid gap-2">
+                                <button type="submit" class="btn btn-primary" id="submitBtn">Start Processing</button>
+                            </div>
+                        </form>
+                        
+                        <div id="processingSection" style="display: none;">
+                            <div class="mt-4">
+                                <h5>Processing Results <span id="processCounter"></span></h5>
+                                <div class="progress">
+                                    <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+                                </div>
+                                <p class="text-muted small mt-2">This process may take some time depending on the number of enrollments. Please do not close this page.</p>
+                            </div>
+                        </div>
+                        
+                        <div id="downloadSection" class="text-center">
+                            <div class="alert alert-success">
+                                <h5>Processing Complete!</h5>
+                                <p>All student results have been extracted successfully.</p>
+                            </div>
+                            <a id="downloadBtn" href="#" class="btn btn-success btn-lg mt-3">
+                                <i class="bi bi-download"></i> Download Results CSV
+                            </a>
+                        </div>
+                        
+                        <div id="errorAlert" class="alert alert-danger"></div>
+                    </div>
+                </div>
+                
+                <div class="card mt-4">
+                    <div class="card-header">
+                        <h4 class="mb-0">Instructions</h4>
+                    </div>
+                    <div class="card-body">
+                        <ol>
+                            <li>Select your program branch and semester.</li>
+                            <li>Enter the first and last enrollment numbers to define the range.</li>
+                            <li>Click "Start Processing" to begin extracting results.</li>
+                            <li>The app will automatically solve CAPTCHAs and process all results.</li>
+                            <li>After processing completes, download the CSV file containing all results.</li>
+                        </ol>
+                        <div class="alert alert-warning">
+                            <strong>Note:</strong> Please ensure that you have the correct enrollment number format and semester information.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer class="mt-5 py-3 bg-dark text-white text-center">
+        <div class="container">
+            <p class="mb-0">&copy; 2025 RGPV Results Scraper | For Educational Purposes Only</p>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.6.1/socket.io.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const socket = io();
+            let sessionId = null;
+            
+            // Form submission
+            document.getElementById('scrapingForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+                document.getElementById('submitBtn').disabled = true;
+                document.getElementById('processingSection').style.display = 'block';
+                document.getElementById('errorAlert').style.display = 'none';
+                document.getElementById('downloadSection').style.display = 'none';
+                
+                const formData = new FormData(this);
+                
+                fetch('/process', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    sessionId = data.session_id;
+                })
+                .catch(error => {
+                    showError("Failed to start processing: " + error);
+                });
+            });
+            
+            // Socket events
+            socket.on('progress', function(data) {
+                const progressBar = document.querySelector('.progress-bar');
+                progressBar.style.width = data.percent + '%';
+                progressBar.setAttribute('aria-valuenow', data.percent);
+                document.getElementById('processCounter').textContent = `(${data.count} of ${data.total})`;
+            });
+            
+            socket.on('complete', function(data) {
+                document.getElementById('processingSection').style.display = 'none';
+                document.getElementById('downloadSection').style.display = 'block';
+                document.getElementById('downloadBtn').href = '/download/' + data.session_id;
+            });
+            
+            socket.on('error', function(data) {
+                showError(data.message);
+            });
+            
+            function showError(message) {
+                const errorAlert = document.getElementById('errorAlert');
+                errorAlert.textContent = message;
+                errorAlert.style.display = 'block';
+                document.getElementById('processingSection').style.display = 'none';
+                document.getElementById('submitBtn').disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
