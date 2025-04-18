@@ -18,7 +18,10 @@ app = Flask(__name__)
 socketio = SocketIO(app)
 
 # Configure Tesseract path
-pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
+if os.name == 'nt':  # Windows
+    pytesseract.pytesseract.tesseract_cmd = 'C:/Program Files/Tesseract-OCR/tesseract'
+else:  # Linux/macOS
+    pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
 
 def get_random_string():
     random_str = ''.join([random.choice(string.ascii_letters + string.digits) for _ in range(24)])
@@ -48,7 +51,7 @@ class Processor:
         return True
 
     def process(self, wait=False):
-        with ThreadPoolExecutor(max_workers=200) as executor:
+        with ThreadPoolExecutor(max_workers=100) as executor:
             for roll in self.roll_list:
                 executor.submit(self.try_open, roll)
             executor.shutdown(wait=wait)
@@ -109,7 +112,7 @@ class Processor:
                     return 1
                 
                 img = Image.open(BytesIO(response.content))
-                solution = pytesseract.image_to_string(img).strip().upper().replace(' ', '')
+                solution = pytesseract.image_to_string(img, config='--psm 7 --oem 1').strip().upper().replace(' ', '')
                 if not solution:
                     return 1
                 
@@ -150,7 +153,11 @@ class Processor:
                     with self.lock:
                         self.processed_count += 1
                         progress = int((self.processed_count / self.total_count) * 100)
-                        socketio.emit('progress', {'count': self.processed_count, 'total': self.total_count, 'percent': progress})
+                        socketio.start_background_task(
+                            socketio.emit, 'progress', 
+                            {'count': self.processed_count, 'total': self.total_count, 'percent': progress}
+                        )
+
                     return 0
                 else:
                     return 1
@@ -205,7 +212,11 @@ class Processor:
             self.results[int(roll[-3:])] = list_data
             
             progress = int((self.processed_count / self.total_count) * 100)
-            socketio.emit('progress', {'count': self.processed_count, 'total': self.total_count, 'percent': progress})
+            socketio.start_background_task(
+                socketio.emit, 'progress', 
+                {'count': self.processed_count, 'total': self.total_count, 'percent': progress}
+            )
+
 
     def to_csv(self):
         if self.fail:
@@ -300,4 +311,5 @@ def download(session_id):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    socketio.run(app, host="0.0.0.0", port=port, debug=False, allow_unsafe_werkzeug=True)
+    socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading", ping_timeout=60, ping_interval=25)
+    socketio.run(app, host="0.0.0.0", port=port, debug=True, allow_unsafe_werkzeug=True)
