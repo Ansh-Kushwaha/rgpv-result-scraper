@@ -2,3 +2,4 @@
 *.xls
 *.csv
 /__pycache__
+/logs
